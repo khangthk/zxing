@@ -27,6 +27,7 @@ import org.junit.Assert;
 import org.junit.Test;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Random;
 
 /**
@@ -60,6 +61,25 @@ public class PDF417DecoderTestCase extends Assert {
         67, optionalData[optionalData.length - 1]);
   }
 
+
+  /**
+   * The numeric file ID is built with three-digit groups; this must use Latin digits regardless of
+   * the JVM default locale.
+   */
+  @Test
+  public void testFileIdLocaleIndependent() throws FormatException {
+    int[] sampleCodes = {20, 928, 111, 100, 17, 53, 923, 1, 111, 104, 923, 3, 64, 416, 34, 923, 4, 258, 446, 67,
+      1000, 1000, 1000};
+    Locale defaultLocale = Locale.getDefault();
+    try {
+      Locale.setDefault(new Locale("ar", "EG"));
+      PDF417ResultMetadata resultMetadata = new PDF417ResultMetadata();
+      DecodedBitStreamParser.decodeMacroBlock(sampleCodes, 2, resultMetadata);
+      assertEquals("017053", resultMetadata.getFileId());
+    } finally {
+      Locale.setDefault(defaultLocale);
+    }
+  }
 
   /**
    * Tests the second given in ISO/IEC 15438:2015(E) - Annex H.4
@@ -180,6 +200,38 @@ public class PDF417DecoderTestCase extends Assert {
   public void testSampleWithNoDataNoMacro() throws FormatException {
     int[] sampleCodes = {3, 899, 899, 0};
     DecodedBitStreamParser.decode(sampleCodes, "0");
+  }
+
+  @Test(expected = FormatException.class)
+  public void testTextCompactionModeShiftAtEnd() throws FormatException {
+    // mode shift to byte compaction (913) as the final codeword, no value follows
+    DecodedBitStreamParser.decode(new int[] {3, 65, 913}, "0");
+  }
+
+  @Test(expected = FormatException.class)
+  public void testTextCompactionEciAtEnd() throws FormatException {
+    // ECI charset marker (927) as the final codeword, no charset value follows
+    DecodedBitStreamParser.decode(new int[] {3, 65, 927}, "0");
+  }
+
+  @Test(expected = FormatException.class)
+  public void testByteCompactionLeadingEciAtEnd() throws FormatException {
+    DecodedBitStreamParser.decode(new int[] {3, 901, 927}, "0");
+  }
+
+  @Test(expected = FormatException.class)
+  public void testByteCompactionEciAtEnd() throws FormatException {
+    DecodedBitStreamParser.decode(new int[] {5, 901, 65, 66, 927}, "0");
+  }
+
+  @Test(expected = FormatException.class)
+  public void testModeShiftToByteAtEnd() throws FormatException {
+    DecodedBitStreamParser.decode(new int[] {4, 901, 65, 913}, "0");
+  }
+
+  @Test(expected = FormatException.class)
+  public void testEciCharsetAtEnd() throws FormatException {
+    DecodedBitStreamParser.decode(new int[] {5, 902, 1, 200, 927}, "0");
   }
 
   @Test

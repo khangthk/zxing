@@ -30,6 +30,7 @@ import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * <p>The main class which implements Aztec Code decoding -- as opposed to locating and extracting
@@ -85,7 +86,7 @@ public final class Decoder {
     byte[] rawBytes = convertBoolArrayToByteArray(correctedBits.correctBits);
     String result = getEncodedData(correctedBits.correctBits);
     DecoderResult decoderResult =
-        new DecoderResult(rawBytes, result, null, String.format("%d%%", correctedBits.ecLevel));
+        new DecoderResult(rawBytes, result, null, String.format(Locale.ROOT, "%d%%", correctedBits.ecLevel));
     decoderResult.setNumBits(correctedBits.correctBits.length);
     decoderResult.setErrorsCorrected(correctedBits.errorsCorrected);
     return decoderResult;
@@ -108,7 +109,7 @@ public final class Decoder {
 
     // Final decoded string result
     // (correctedBits-5) / 4 is an upper bound on the size (all-digit result)
-    StringBuilder result = new StringBuilder((correctedBits.length - 5) / 4);
+    StringBuilder result = new StringBuilder(Math.max(0, (correctedBits.length - 5) / 4));
 
     // Intermediary buffer of decoded bytes, which is decoded into a string and flushed
     // when character encoding changes (ECI) or input ends.
@@ -301,7 +302,7 @@ public final class Decoder {
 
     int numDataCodewords = ddata.getNbDatablocks();
     int numCodewords = rawbits.length / codewordSize;
-    if (numCodewords < numDataCodewords) {
+    if (numDataCodewords < 1 || numCodewords < numDataCodewords) {
       throw FormatException.getFormatInstance();
     }
     int offset = rawbits.length % codewordSize;
@@ -356,10 +357,16 @@ public final class Decoder {
    *
    * @return the array of bits
    */
-  private boolean[] extractBits(BitMatrix matrix) {
+  private boolean[] extractBits(BitMatrix matrix) throws FormatException {
     boolean compact = ddata.isCompact();
     int layers = ddata.getNbLayers();
     int baseMatrixSize = (compact ? 11 : 14) + layers * 4; // not including alignment lines
+    int matrixSize = compact ? baseMatrixSize : baseMatrixSize + 1 + 2 * ((baseMatrixSize / 2 - 1) / 15);
+    if (matrix.getHeight() != matrixSize || matrix.getWidth() != matrixSize) {
+      // The matrix dimensions are fixed by the layer count; a mismatched detector result would
+      // otherwise index outside the matrix below.
+      throw FormatException.getFormatInstance();
+    }
     int[] alignmentMap = new int[baseMatrixSize];
     boolean[] rawbits = new boolean[totalBitsInLayer(layers, compact)];
 
@@ -368,7 +375,6 @@ public final class Decoder {
         alignmentMap[i] = i;
       }
     } else {
-      int matrixSize = baseMatrixSize + 1 + 2 * ((baseMatrixSize / 2 - 1) / 15);
       int origCenter = baseMatrixSize / 2;
       int center = matrixSize / 2;
       for (int i = 0; i < origCenter; i++) {

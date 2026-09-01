@@ -23,6 +23,7 @@ import com.google.zxing.pdf417.PDF417ResultMetadata;
 
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * <p>This class contains the methods for decoding the PDF417 codewords.</p>
@@ -51,6 +52,7 @@ final class DecodedBitStreamParser {
   private static final int BEGIN_MACRO_PDF417_CONTROL_BLOCK = 928;
   private static final int BEGIN_MACRO_PDF417_OPTIONAL_FIELD = 923;
   private static final int MACRO_PDF417_TERMINATOR = 922;
+  private static final int READER_INITIALIZATION = 921;
   private static final int MODE_SHIFT_TO_BYTE_COMPACTION_MODE = 913;
   private static final int MAX_NUMERIC_CODEWORDS = 15;
 
@@ -98,10 +100,12 @@ final class DecodedBitStreamParser {
   }
 
   static DecoderResult decode(int[] codewords, String ecLevel) throws FormatException {
+    int count = codewords[0];
+    boolean readerInit = (codewords.length > 1 && codewords[1] == READER_INITIALIZATION);
     ECIStringBuilder result = new ECIStringBuilder(codewords.length * 2);
     int codeIndex = textCompaction(codewords, 1, result);
     PDF417ResultMetadata resultMetadata = new PDF417ResultMetadata();
-    while (codeIndex < codewords[0]) {
+    while (codeIndex < count) {
       int code = codewords[codeIndex++];
       switch (code) {
         case TEXT_COMPACTION_MODE_LATCH:
@@ -112,12 +116,18 @@ final class DecodedBitStreamParser {
           codeIndex = byteCompaction(code, codewords, codeIndex, result);
           break;
         case MODE_SHIFT_TO_BYTE_COMPACTION_MODE:
+          if (codeIndex >= count) {
+            throw FormatException.getFormatInstance();
+          }
           result.append((char) codewords[codeIndex++]);
           break;
         case NUMERIC_COMPACTION_MODE_LATCH:
           codeIndex = numericCompaction(codewords, codeIndex, result);
           break;
         case ECI_CHARSET:
+          if (codeIndex >= count) {
+            throw FormatException.getFormatInstance();
+          }
           result.appendECI(codewords[codeIndex++]);
           break;
         case ECI_GENERAL_PURPOSE:
@@ -149,13 +159,15 @@ final class DecodedBitStreamParser {
     }
     DecoderResult decoderResult = new DecoderResult(null, result.toString(), null, ecLevel);
     decoderResult.setOther(resultMetadata);
+    decoderResult.setReaderInit(readerInit);
     return decoderResult;
   }
 
   @SuppressWarnings("deprecation")
   static int decodeMacroBlock(int[] codewords, int codeIndex, PDF417ResultMetadata resultMetadata)
       throws FormatException {
-    if (codeIndex + NUMBER_OF_SEQUENCE_CODEWORDS > codewords[0]) {
+    int maxLength = codewords[0];
+    if (codeIndex + NUMBER_OF_SEQUENCE_CODEWORDS > maxLength) {
       // we must have at least two bytes left for the segment index
       throw FormatException.getFormatInstance();
     }
@@ -179,11 +191,11 @@ final class DecodedBitStreamParser {
     // (See ISO/IEC 15438:2015 Annex H.6) and preserves all info, but some generators (e.g. TEC-IT) write
     // the fileId using text compaction, so in those cases the fileId will appear mangled.
     StringBuilder fileId = new StringBuilder();
-    while (codeIndex < codewords[0] &&
+    while (codeIndex < maxLength &&
            codeIndex < codewords.length &&
            codewords[codeIndex] != MACRO_PDF417_TERMINATOR &&
            codewords[codeIndex] != BEGIN_MACRO_PDF417_OPTIONAL_FIELD) {
-      fileId.append(String.format("%03d", codewords[codeIndex]));
+      fileId.append(String.format(Locale.ROOT, "%03d", codewords[codeIndex]));
       codeIndex++;
     }
     if (fileId.length() == 0) {
@@ -193,14 +205,17 @@ final class DecodedBitStreamParser {
     resultMetadata.setFileId(fileId.toString());
 
     int optionalFieldsStart = -1;
-    if (codewords[codeIndex] == BEGIN_MACRO_PDF417_OPTIONAL_FIELD) {
+    if (codeIndex < maxLength && codewords[codeIndex] == BEGIN_MACRO_PDF417_OPTIONAL_FIELD) {
       optionalFieldsStart = codeIndex + 1;
     }
 
-    while (codeIndex < codewords[0]) {
+    while (codeIndex < maxLength) {
       switch (codewords[codeIndex]) {
         case BEGIN_MACRO_PDF417_OPTIONAL_FIELD:
           codeIndex++;
+          if (codeIndex >= maxLength) {
+            throw FormatException.getFormatInstance();
+          }
           switch (codewords[codeIndex]) {
             case MACRO_PDF417_OPTIONAL_FIELD_FILE_NAME:
               ECIStringBuilder fileName = new ECIStringBuilder();
@@ -330,16 +345,19 @@ final class DecodedBitStreamParser {
             // of the Text Compaction mode. Codeword 913 is only available
             // in Text Compaction mode; its use is described in 5.4.2.4.
             textCompactionData[index] = MODE_SHIFT_TO_BYTE_COMPACTION_MODE;
+            if (codeIndex >= codewords[0]) {
+              throw FormatException.getFormatInstance();
+            }
             code = codewords[codeIndex++];
             byteCompactionData[index] = code;
             index++;
             break;
           case ECI_CHARSET:
-            subMode = decodeTextCompaction(textCompactionData, byteCompactionData, index, result, subMode);
-            result.appendECI(codewords[codeIndex++]);
-            if (codeIndex > codewords[0]) {
+            if (codeIndex >= codewords[0]) {
               throw FormatException.getFormatInstance();
             }
+            subMode = decodeTextCompaction(textCompactionData, byteCompactionData, index, result, subMode);
+            result.appendECI(codewords[codeIndex++]);
             textCompactionData = new int[(codewords[0] - codeIndex) * 2];
             byteCompactionData = new int[(codewords[0] - codeIndex) * 2];
             index = 0;
@@ -572,6 +590,9 @@ final class DecodedBitStreamParser {
     while (codeIndex < codewords[0] && !end) {
       //handle leading ECIs
       while (codeIndex < codewords[0] && codewords[codeIndex] == ECI_CHARSET) {
+        if (codeIndex + 1 >= codewords[0]) {
+          throw FormatException.getFormatInstance();
+        }
         result.appendECI(codewords[++codeIndex]);
         codeIndex++;
       }
@@ -601,6 +622,9 @@ final class DecodedBitStreamParser {
             if (code < TEXT_COMPACTION_MODE_LATCH) {
               result.append((byte) code);
             } else if (code == ECI_CHARSET) {
+              if (codeIndex >= codewords[0]) {
+                throw FormatException.getFormatInstance();
+              }
               result.appendECI(codewords[codeIndex++]);
             } else {
               codeIndex--;

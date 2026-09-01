@@ -42,6 +42,7 @@ import java.util.Map;
 public class FinderPatternFinder {
 
   private static final int CENTER_QUORUM = 2;
+  private static final int MAX_FINDER_PATTERN_CANDIDATES = 25;
   private static final EstimatedModuleComparator moduleComparator = new EstimatedModuleComparator();
   protected static final int MIN_SKIP = 3; // 1 pixel/module times 3 modules/center
   protected static final int MAX_MODULES = 97; // support up to version 20 for mobile clients
@@ -623,9 +624,17 @@ public class FinderPatternFinder {
       throw NotFoundException.getNotFoundInstance();
     }
 
-    for (Iterator<FinderPattern> it = possibleCenters.iterator(); it.hasNext();) {
-      if (it.next().getCount() < CENTER_QUORUM) {
-        it.remove();
+    int confirmedCount = 0;
+    for (FinderPattern pattern : possibleCenters) {
+      if (pattern.getCount() >= CENTER_QUORUM) {
+        confirmedCount++;
+      }
+    }
+    if (confirmedCount >= 3 || startSize > MAX_FINDER_PATTERN_CANDIDATES) {
+      for (Iterator<FinderPattern> it = possibleCenters.iterator(); it.hasNext();) {
+        if (it.next().getCount() < CENTER_QUORUM) {
+          it.remove();
+        }
       }
     }
 
@@ -695,6 +704,8 @@ public class FinderPatternFinder {
           // we need to check both two equal sides separately.
           // The value of |c^2 - 2 * b^2| + |c^2 - 2 * a^2| increases as dissimilarity
           // from isosceles right triangle.
+          // Heuristically it seems that the following formula works better (although it's
+          // not clear any more why...)
           double d = Math.abs(c - 2 * b) + Math.abs(c - 2 * a);
           if (d < distortion) {
             distortion = d;
